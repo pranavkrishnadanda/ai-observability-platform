@@ -15,12 +15,16 @@ from app.core.kafka_client import get_producer
 from app.core.redis_client import get_redis_pool
 import app.consumers.log_consumer as _log_consumer_module
 import app.consumers.anomaly_consumer as _anomaly_consumer_module
+import app.services.alert_engine as _alert_engine_module
 from app.consumers.log_consumer import run_consumer
 from app.consumers.anomaly_consumer import run_anomaly_consumer
+from app.services.alert_engine import run_alert_engine
 from app.services.anomaly_detector import run_anomaly_detection_loop
 from app.services.baseline_calculator import run_baseline_calculator_loop
 
-_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="kafka-consumer")
+# Each consumer runs in its own thread (they use blocking KafkaConsumer.poll)
+_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="kafka-consumer")
+
 from app.api.v1 import (
     alerts,
     analysis,
@@ -40,6 +44,16 @@ logging.basicConfig(
 )
 
 
+# Sync wrappers so async consumers (which contain blocking poll() calls) run in
+# their own threads with a fresh event loop — avoids blocking the FastAPI loop.
+def _run_anomaly_consumer() -> None:
+    asyncio.run(run_anomaly_consumer())
+
+
+def _run_alert_engine() -> None:
+    asyncio.run(run_alert_engine())
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # ── Startup ──────────────────────────────────────────────────────────────
@@ -47,6 +61,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.redis = await get_redis_pool()
     app.state.kafka_producer = get_producer()
     logger.info("Startup complete.")
+
     anomaly_task = asyncio.create_task(
         run_anomaly_detection_loop(),
         name="anomaly-detector"
@@ -56,29 +71,40 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         name="baseline-calculator"
     )
     logger.info("Background schedulers started")
+
+    # run_consumer() is sync (calls asyncio.run internally) — straight to executor.
+    # _run_anomaly_consumer / _run_alert_engine are sync wrappers around async fns
+    # that contain blocking KafkaConsumer.poll() — must not run on the FastAPI loop.
     loop = asyncio.get_running_loop()
     log_consumer_future = loop.run_in_executor(_executor, run_consumer)
-    anomaly_consumer_task = asyncio.create_task(
-        run_anomaly_consumer(),
-        name="anomaly-consumer"
-    )
+    anomaly_consumer_future = loop.run_in_executor(_executor, _run_anomaly_consumer)
+    alert_engine_future = loop.run_in_executor(_executor, _run_alert_engine)
     logger.info("Kafka consumers started")
+
     yield
+
     # ── Shutdown ─────────────────────────────────────────────────────────────
     logger.info("Shutting down…")
+
+    # Signal all consumer loops to exit
     _log_consumer_module._shutdown = True
     _anomaly_consumer_module._shutdown = True
+    _alert_engine_module._shutdown = True
+
     anomaly_task.cancel()
     baseline_task.cancel()
-    anomaly_consumer_task.cancel()
-    await asyncio.gather(anomaly_task, baseline_task, anomaly_consumer_task, return_exceptions=True)
+    await asyncio.gather(anomaly_task, baseline_task, return_exceptions=True)
     logger.info("Background schedulers stopped")
-    try:
-        await asyncio.wait_for(asyncio.wrap_future(log_consumer_future), timeout=10.0)
-    except (asyncio.TimeoutError, Exception):
-        pass
+
+    # Wait up to 10 s for each consumer thread to finish cleanly
+    for fut in (log_consumer_future, anomaly_consumer_future, alert_engine_future):
+        try:
+            await asyncio.wait_for(asyncio.wrap_future(fut), timeout=10.0)
+        except (asyncio.TimeoutError, Exception):
+            pass
     _executor.shutdown(wait=False)
     logger.info("Kafka consumers stopped")
+
     await app.state.redis.aclose()
     app.state.kafka_producer.close()
     logger.info("Shutdown complete.")
