@@ -39,9 +39,11 @@ def publish_to_dlq(producer, messages: list[dict], error: str) -> None:
             "consumer_group": CONSUMER_GROUP,
         }
         try:
-            producer.send("logs.raw.dlq", value=dlq_envelope, key=msg.get("tenant_id", "unknown").encode() if isinstance(msg.get("tenant_id"), str) else b"unknown")
+            producer.send(TOPICS["logs.dlq"], value=dlq_envelope, key=msg.get("tenant_id", "unknown").encode() if isinstance(msg.get("tenant_id"), str) else b"unknown")
         except Exception as dlq_err:
             logger.error(f"DLQ publish also failed: {dlq_err}")
+
+REQUIRED_FIELDS = {"tenant_id", "service_name", "severity", "message", "ingested_at"}
 
 _shutdown = False
 
@@ -167,42 +169,54 @@ def run_consumer() -> None:
                 )
 
                 if should_flush and batch:
-                    try:
-                        await write_batch_to_postgres(batch, session_factory)
-                        await write_batch_to_redis(batch, redis)
+                    valid_msgs = [m for m in batch if REQUIRED_FIELDS.issubset(m.keys())]
+                    invalid_msgs = [m for m in batch if not REQUIRED_FIELDS.issubset(m.keys())]
 
-                        # Forward enriched messages to logs.processed for downstream consumers
-                        for msg in batch:
-                            producer.send(
-                                TOPICS["logs.processed"],
-                                value=msg,
-                                key=msg["tenant_id"].encode(),
-                            )
-                        producer.flush()
+                    if invalid_msgs:
+                        logger.warning(f"Skipping {len(invalid_msgs)} malformed messages (missing required fields)")
+                        publish_to_dlq(producer, invalid_msgs, "missing required fields")
+
+                    try:
+                        if valid_msgs:
+                            await write_batch_to_postgres(valid_msgs, session_factory)
+                            await write_batch_to_redis(valid_msgs, redis)
+
+                            # Forward enriched messages to logs.processed for downstream consumers
+                            for msg in valid_msgs:
+                                producer.send(
+                                    TOPICS["logs.processed"],
+                                    value=msg,
+                                    key=msg["tenant_id"].encode(),
+                                )
+                            producer.flush()
 
                         consumer.commit()
-                        logger.info(f"Flushed batch of {len(batch)} messages")
+                        logger.info(f"Flushed batch of {len(valid_msgs)} messages ({len(invalid_msgs)} skipped)")
                         batch = []
                         last_flush = time.monotonic()
                     except Exception as e:
                         logger.error(f"Batch processing failed: {e}", exc_info=True)
                         # Send failed messages to DLQ so partition can advance
-                        publish_to_dlq(producer, batch, str(e))
+                        publish_to_dlq(producer, valid_msgs, str(e))
                         try:
                             consumer.commit()  # Commit so we don't reprocess indefinitely
                         except Exception as commit_err:
                             logger.error(f"Commit after DLQ failed: {commit_err}")
                         batch = []
-                        raw_messages = []
                         last_flush = time.monotonic()
         finally:
             # Drain any remaining messages before exit
             if batch:
+                valid_msgs = [m for m in batch if REQUIRED_FIELDS.issubset(m.keys())]
+                invalid_msgs = [m for m in batch if not REQUIRED_FIELDS.issubset(m.keys())]
+                if invalid_msgs:
+                    publish_to_dlq(producer, invalid_msgs, "missing required fields")
                 try:
-                    await write_batch_to_postgres(batch, session_factory)
-                    await write_batch_to_redis(batch, redis)
+                    if valid_msgs:
+                        await write_batch_to_postgres(valid_msgs, session_factory)
+                        await write_batch_to_redis(valid_msgs, redis)
                     consumer.commit()
-                    logger.info(f"Final flush: {len(batch)} messages")
+                    logger.info(f"Final flush: {len(valid_msgs)} messages ({len(invalid_msgs)} skipped)")
                 except Exception as exc:
                     logger.error(f"Final flush failed: {exc}")
 

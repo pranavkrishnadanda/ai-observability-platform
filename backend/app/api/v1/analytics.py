@@ -168,12 +168,13 @@ async def get_overview(
         "window_hours": 24,
         "total_logs": total_24h,
         "total_logs_today": total_today,
+        "total_logs_yesterday": total_yesterday,
         "total_logs_week": total_week,
         "error_logs": errors_24h,
         "anomalies_detected": anomalies_detected,
         "alerts_sent": alerts_sent,
+        "alerts_sent_today": alerts_sent,
         "active_services": active_services,
-        # Extended fields for richer dashboards
         "error_rate_today": round(error_rate_today, 4),
         "error_rate_yesterday": round(error_rate_yesterday, 4),
         "active_anomalies": active_anomalies,
@@ -249,6 +250,14 @@ async def get_service_analytics(
     )
     anomaly_data = {row[0]: row[1] for row in anomaly_rows}
 
+    # Last-seen timestamp per service
+    last_seen_rows = await db.execute(
+        select(Log.service_name, func.max(Log.created_at).label("last_seen"))
+        .where(and_(Log.tenant_id == tid, Log.created_at >= week_ago))
+        .group_by(Log.service_name)
+    )
+    last_seen_data = {row[0]: row[1].isoformat() for row in last_seen_rows if row[1]}
+
     # All services seen in the last 7 days (union of all windows)
     all_services = set(vol_7d_data.keys())
 
@@ -256,33 +265,31 @@ async def get_service_analytics(
     for service in sorted(all_services, key=lambda s: vol_24h_data.get(s, 0), reverse=True):
         vol_1h = vol_1h_data.get(service, 0)
         vol_24h = vol_24h_data.get(service, 0)
-        vol_7d = vol_7d_data.get(service, 0)
 
         errs_1h = err_1h_data.get(service, 0)
         errs_24h = err_24h_data.get(service, 0)
-        errs_7d = err_7d_data.get(service, 0)
 
         err_1h = round(errs_1h / vol_1h, 4) if vol_1h else 0.0
         err_24h = round(errs_24h / vol_24h, 4) if vol_24h else 0.0
-        err_7d = round(errs_7d / vol_7d, 4) if vol_7d else 0.0
 
         anomaly_count = anomaly_data.get(service, 0)
-
         health = "critical" if err_1h > 0.1 else "degraded" if err_1h > 0.05 else "healthy"
 
         service_data.append(
             {
                 "service_name": service,
-                "log_volume": {"last_1h": vol_1h, "last_24h": vol_24h, "last_7d": vol_7d},
-                "error_rate": {"last_1h": err_1h, "last_24h": err_24h, "last_7d": err_7d},
-                "anomaly_count_7d": anomaly_count,
                 "health_status": health,
+                "log_volume_1h": vol_1h,
+                "log_volume_24h": vol_24h,
+                "error_rate_1h": err_1h,
+                "error_rate_24h": err_24h,
+                "anomaly_count_7d": anomaly_count,
+                "last_seen": last_seen_data.get(service, now.isoformat()),
             }
         )
 
-    result = {"services": service_data}
-    await cache_set(cache_key, result, CACHE_TTL)
-    return result
+    await cache_set(cache_key, service_data, CACHE_TTL)
+    return service_data
 
 
 @router.get("/analytics/services/{service_name}/timeline")

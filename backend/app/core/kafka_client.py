@@ -12,6 +12,7 @@ TOPICS = {
     "logs.processed": "logs.processed",
     "logs.anomalies": "logs.anomalies",
     "logs.alerts": "logs.alerts",
+    "logs.dlq": "logs.dlq",
 }
 
 _producer: Optional[KafkaProducer] = None
@@ -21,14 +22,14 @@ def get_producer() -> KafkaProducer:
     global _producer
     if _producer is None:
         _producer = KafkaProducer(
-            bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS,
+            bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS.split(","),
             value_serializer=lambda v: json.dumps(v, default=str).encode("utf-8"),
             key_serializer=lambda k: k.encode("utf-8") if isinstance(k, str) else k,
             acks="all",
-            retries=3,
-            retry_backoff_ms=100,
+            retries=5,
+            retry_backoff_ms=500,
             linger_ms=10,
-            batch_size=16384,
+            batch_size=32768,
             compression_type="lz4",
         )
     return _producer
@@ -37,7 +38,7 @@ def get_producer() -> KafkaProducer:
 def create_consumer(topics: list[str], group_id: str) -> KafkaConsumer:
     return KafkaConsumer(
         *topics,
-        bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS,
+        bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS.split(","),
         group_id=group_id,
         value_deserializer=lambda v: json.loads(v.decode("utf-8")),
         key_deserializer=lambda k: k.decode("utf-8") if k else None,

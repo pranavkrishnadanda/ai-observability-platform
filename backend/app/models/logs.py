@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import CheckConstraint, DateTime, Index, String, Text, func
-from sqlalchemy.dialects.postgresql import JSON, UUID
+from sqlalchemy.dialects.postgresql import INET, JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -25,7 +25,7 @@ class Log(Base):
     log_metadata: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
     trace_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     span_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    source_ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    source_ip: Mapped[Optional[str]] = mapped_column(INET(), nullable=True)
     environment: Mapped[str] = mapped_column(String(20), nullable=False, default="prod")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

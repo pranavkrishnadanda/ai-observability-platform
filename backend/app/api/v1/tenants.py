@@ -55,6 +55,7 @@ async def register_tenant(
     db.add(tenant)
     await db.commit()
     await db.refresh(tenant)
+    await invalidate_tenant_cache()
 
     return TenantRegisterResponse(
         tenant_id=str(tenant.id),

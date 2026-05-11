@@ -250,30 +250,27 @@ Auth: `X-API-Key`.
 | limit | integer | 100 | 1–1000 |
 | offset | integer | 0 | ≥ 0 |
 
-**Response 200:**
+**Response 200:** flat array (not paginated wrapper)
 ```json
-{
-  "data": [
-    {
-      "id": "...",
-      "service_name": "checkout-api",
-      "anomaly_type": "error_rate_spike",
-      "severity_score": 0.82,
-      "detected_at": "2026-05-10T12:00:00Z",
-      "window_start": "2026-05-10T11:55:00Z",
-      "window_end": "2026-05-10T12:00:00Z",
-      "baseline_value": 0.01,
-      "observed_value": 0.18,
-      "deviation_pct": 1700.00,
-      "claude_analysis": "Spike correlated with deploy v1.42.0 ...",
-      "status": "active",
-      "resolved_at": null,
-      "created_at": "2026-05-10T12:00:01Z"
-    }
-  ],
-  "total": 4,
-  "page_info": { "limit": 100, "offset": 0, "has_next": false }
-}
+[
+  {
+    "id": "...",
+    "tenant_id": "8b1e0c3a-...",
+    "service_name": "checkout-api",
+    "anomaly_type": "error_rate_spike",
+    "severity_score": 0.82,
+    "detected_at": "2026-05-10T12:00:00Z",
+    "window_start": "2026-05-10T11:55:00Z",
+    "window_end": "2026-05-10T12:00:00Z",
+    "baseline_value": 0.01,
+    "observed_value": 0.18,
+    "deviation_pct": 1700.00,
+    "claude_analysis": "Spike correlated with deploy v1.42.0 ...",
+    "status": "active",
+    "resolved_at": null,
+    "created_at": "2026-05-10T12:00:01Z"
+  }
+]
 ```
 
 ---
@@ -402,47 +399,56 @@ Auth: `X-API-Key`.
 {
   "window_hours": 24,
   "total_logs": 5237412,
+  "total_logs_today": 1842310,
+  "total_logs_yesterday": 1654200,
+  "total_logs_week": 9123400,
   "error_logs": 18923,
   "anomalies_detected": 12,
   "alerts_sent": 9,
-  "active_services": 14
+  "alerts_sent_today": 9,
+  "active_services": 14,
+  "error_rate_today": 0.0102,
+  "error_rate_yesterday": 0.0093,
+  "active_anomalies": 3,
+  "top_5_error_services": [
+    { "service": "checkout-api", "error_count": 4321 }
+  ],
+  "system_health_score": 70
 }
 ```
 
 ---
 
 ### GET /api/v1/analytics/services
-Auth: `X-API-Key`. Returns per-service 24h rollups sorted by volume desc.
+Auth: `X-API-Key`. Returns per-service rollups sorted by 24h volume desc.
 
-**Response 200:**
+**Response 200:** flat array
 ```json
-{
-  "services": [
-    {
-      "service_name": "checkout-api",
-      "volume_24h": 1284321,
-      "error_count_24h": 4321,
-      "error_rate_24h": 0.0034,
-      "anomaly_count_24h": 2,
-      "last_seen_at": "2026-05-10T12:04:30Z"
-    }
-  ]
-}
-```
+[
+  {
+    "service_name": "checkout-api",
+    "health_status": "degraded",
+    "log_volume_1h": 84321,
+    "log_volume_24h": 1284321,
+    "error_rate_1h": 0.012,
+    "error_rate_24h": 0.0034,
+    "anomaly_count_7d": 2,
+    "last_seen": "2026-05-10T12:04:30Z"
+  }
+]
 
 ---
 
 ### GET /api/v1/analytics/services/{name}/timeline
-Auth: `X-API-Key`. Returns 5-minute bucketed time series for the last 24 hours.
+Auth: `X-API-Key`. Returns hourly bucketed time series for the last 24 hours.
 
 **Response 200:**
 ```json
 {
   "service_name": "checkout-api",
-  "bucket_seconds": 300,
-  "buckets": [
-    { "ts": "2026-05-09T12:00:00Z", "volume": 4123, "errors": 12 },
-    { "ts": "2026-05-09T12:05:00Z", "volume": 4002, "errors": 11 }
+  "timeline": [
+    { "hour": "2026-05-09T12:00:00Z", "total_logs": 4123, "errors": 12, "error_rate": 0.0029 },
+    { "hour": "2026-05-09T13:00:00Z", "total_logs": 4002, "errors": 11, "error_rate": 0.0027 }
   ]
 }
 ```

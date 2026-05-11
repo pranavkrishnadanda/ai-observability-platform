@@ -1,12 +1,26 @@
-PHASE_1_COMPLETE
-PHASE_2_COMPLETE
-PHASE_3_COMPLETE
-PHASE_4_COMPLETE
-PHASE_5_COMPLETE
-PHASE_6_COMPLETE
-PHASE_7_COMPLETE
-PHASE_8_COMPLETE
-PHASE_9_COMPLETE
-PHASE_10_COMPLETE
-PHASE_11_COMPLETE
+PHASE_12_COMPLETE
+PHASE_13_COMPLETE
+PHASE_14_COMPLETE
+PHASE_15_COMPLETE
+PHASE_16_COMPLETE
+PHASE_17_COMPLETE
+PHASE_18_COMPLETE
+PHASE_19_COMPLETE
+PHASE_20_COMPLETE
 ALL_PHASES_COMPLETE
+
+Final State (2026-05-10):
+- Backend: Python 3.12, FastAPI, 40/40 tests passing
+- Infrastructure: 3-broker Kafka (replication-factor 3), Redis, PostgreSQL
+- Frontend: React 19 + Vite + TypeScript (strict), Tailwind CSS v4
+- Package management: uv (backend), bun (frontend)
+- Deployment: docker-compose (all services) or Vite dev + uvicorn
+
+Post-Release Fixes (2026-05-11) — v1.1.0:
+- Kafka dual-listener: all 3 brokers expose PLAINTEXT_HOST for localhost dev access
+- Auth cache: register_tenant now invalidates Redis cache immediately on new tenant creation
+- Login validation: uses /tenant/settings (auth'd endpoint) instead of /health (always 200)
+- DLQ topic: fixed logs.raw.dlq -> logs.dlq; was causing 60s KafkaTimeoutError per bad batch
+- log-consumer: per-message validation; malformed messages DLQ'd individually, valid ones written
+- API shapes: anomalies flat array; analytics/services flat ServiceMetrics[]; overview adds total_logs_yesterday + alerts_sent_today
+- Dashboard: blank-page crash resolved (TypeError on .map() of paginated wrappers)

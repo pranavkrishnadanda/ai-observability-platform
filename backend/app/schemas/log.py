@@ -1,8 +1,8 @@
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 
 class Severity(str, Enum):
@@ -72,6 +72,16 @@ class LogResponse(BaseModel):
     environment: str
     created_at: datetime
     ingested_at: datetime
+
+    model_config = {"from_attributes": True}
+
+    @field_validator("source_ip", mode="before")
+    @classmethod
+    def coerce_source_ip(cls, v: Any) -> Optional[str]:
+        """Convert IPv4Address/IPv6Address objects returned by asyncpg to str."""
+        if v is None:
+            return None
+        return str(v)
 
 
 class LogListResponse(BaseModel):

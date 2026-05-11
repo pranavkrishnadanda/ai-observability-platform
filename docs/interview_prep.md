@@ -451,3 +451,16 @@ target. The 10× story is documented in `docs/performance.md` §1–§5: more
 brokers, partitioning `logs` by `created_at` daily, Redis Cluster for the
 hot tier, and an Anthropic tier upgrade with a priority queue for
 high-severity anomalies.
+
+---
+
+## Frontend Architecture Decisions
+
+### Why React + Vite over Next.js?
+This dashboard is a pure SPA — no SEO needed, no server-side rendering required. Next.js SSR adds complexity (hydration mismatches, server/client component boundaries) with zero benefit for a gated internal tool. Vite's dev server starts in <300ms vs Next.js's 2-5s; the proxy config forwards /api and /ws to the backend, so CORS isn't an issue in development. For deployment, a static build behind nginx or Vercel handles SPA routing with a single rewrite rule.
+
+### Why TanStack Virtual for the log table?
+At 500 messages (the WebSocket buffer size), rendering a standard table creates 500 DOM nodes. Each log row has ~8 elements — that's 4,000 DOM nodes just for the log list, enough to cause perceptible lag on scroll. TanStack Virtual renders only the ~20 rows visible in the viewport plus an overscan buffer of 20, regardless of total message count. The virtualizer measures each row height individually so variable-length log messages don't break the layout.
+
+### WebSocket reconnection strategy
+Browser WebSocket connections drop on network hiccups, laptop sleep, and server restarts. The hook uses exponential backoff (1s → 2s → 4s → 8s → 16s → 30s cap) with a retry counter that resets to 0 on successful connection. The 30s cap prevents hammering a recovering server. The message buffer (last 500 logs) is preserved across reconnects so the user doesn't lose context. A `mountedRef` prevents state updates after component unmount (avoids React memory leak warnings on navigation).

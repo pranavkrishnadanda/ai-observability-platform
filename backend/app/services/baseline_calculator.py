@@ -122,6 +122,44 @@ async def run_baseline_updater() -> None:
         await asyncio.sleep(300)  # 5 minutes
 
 
+async def calculate_baselines_for_all_tenants() -> None:
+    """Single-shot baseline calculation for all tenants. Creates its own DB/Redis connections."""
+    engine = create_async_engine(settings.DATABASE_URL, pool_size=5, max_overflow=10)
+    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    redis = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+
+    try:
+        async with session_factory() as db:
+            all_keys = await redis.keys("tenant:*:services")
+            tenant_ids: set[str] = set()
+            for key in all_keys:
+                parts = key.split(":")
+                if len(parts) == 3 and parts[2] == "services":
+                    tenant_ids.add(parts[1])
+
+            for tenant_id in tenant_ids:
+                await update_baselines_for_tenant(tenant_id, redis, db)
+
+        logger.info(f"Baseline update complete for {len(tenant_ids)} tenants")
+    finally:
+        await redis.aclose()
+        await engine.dispose()
+
+
+async def run_baseline_calculator_loop():
+    """Recalculates 7-day rolling baselines every 5 minutes."""
+    logger.info("Baseline calculator starting")
+    while True:
+        try:
+            await calculate_baselines_for_all_tenants()
+            logger.info("Baseline calculation complete")
+        except asyncio.CancelledError:
+            logger.info("Baseline calculator cancelled")
+            break
+        except Exception as e:
+            logger.error(f"Baseline calculation error (continuing): {e}")
+        await asyncio.sleep(300)
+
+
 if __name__ == "__main__":
-    import asyncio
     asyncio.run(run_baseline_updater())

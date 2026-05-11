@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
 
     # Kafka
-    KAFKA_BOOTSTRAP_SERVERS: str = "localhost:9092"
+    KAFKA_BOOTSTRAP_SERVERS: str = "kafka-1:9092,kafka-2:9093,kafka-3:9094"
 
     # Anthropic
     ANTHROPIC_API_KEY: str = ""

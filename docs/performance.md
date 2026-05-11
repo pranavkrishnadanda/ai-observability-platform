@@ -119,3 +119,21 @@ Run `./load_tests/run_tests.sh baseline` first as a warm-up pass, then run the t
 | NFR-5: Availability | 99.9% | Depends on infra | Single-node Docker Compose cannot guarantee; requires k8s + replicas in prod |
 | NFR-8: Alert rate limit | 10 alerts/hr | Implemented | Redis counter `alerts:rate:{tenant_id}` with 3600 s TTL |
 | NFR-10: AI analysis latency | < 30 s | Risk at burst | Semaphore(10) can queue under burst; add priority queue for high-severity |
+
+---
+
+## Kafka Cluster Upgrade (Phase 14)
+
+**Before:** Single broker, no replication, auto-created topics
+**After:** 3-broker cluster (kafka-1:9092, kafka-2:9093, kafka-3:9094)
+
+Configuration:
+- `KAFKA_DEFAULT_REPLICATION_FACTOR: 3`
+- `KAFKA_MIN_INSYNC_REPLICAS: 2`
+- `KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3`
+- `KAFKA_AUTO_CREATE_TOPICS_ENABLE: false`
+- Topics: logs.raw (6p/3r), logs.processed (6p/3r), logs.anomalies (3p/3r), logs.alerts (3p/3r), logs.dlq (3p/3r)
+
+Producer settings: `acks=all, retries=5, batch_size=32768, lz4 compression`
+
+**Durability guarantee:** The cluster can lose any 1 of 3 brokers with zero data loss. With MIN_INSYNC_REPLICAS=2, a message is only acknowledged after 2 replicas confirm it — meaning even if the leader fails immediately after ack, one follower already has the data.

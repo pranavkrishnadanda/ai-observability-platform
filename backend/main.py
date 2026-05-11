@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -11,6 +12,8 @@ from app.core.config import settings
 from app.core.database import engine  # noqa: F401 — imported to satisfy lifespan reference
 from app.core.kafka_client import get_producer
 from app.core.redis_client import get_redis_pool
+from app.services.anomaly_detector import run_anomaly_detection_loop
+from app.services.baseline_calculator import run_baseline_calculator_loop
 from app.api.v1 import (
     alerts,
     analysis,
@@ -37,9 +40,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.redis = await get_redis_pool()
     app.state.kafka_producer = get_producer()
     logger.info("Startup complete.")
+    anomaly_task = asyncio.create_task(
+        run_anomaly_detection_loop(),
+        name="anomaly-detector"
+    )
+    baseline_task = asyncio.create_task(
+        run_baseline_calculator_loop(),
+        name="baseline-calculator"
+    )
+    logger.info("Background schedulers started")
     yield
     # ── Shutdown ─────────────────────────────────────────────────────────────
     logger.info("Shutting down…")
+    anomaly_task.cancel()
+    baseline_task.cancel()
+    await asyncio.gather(anomaly_task, baseline_task, return_exceptions=True)
+    logger.info("Background schedulers stopped")
     await app.state.redis.aclose()
     app.state.kafka_producer.close()
     logger.info("Shutdown complete.")
@@ -129,12 +145,16 @@ async def health_check(request: Request) -> JSONResponse:
         components["redis"] = f"down: {exc}"
         overall = "degraded"
 
-    # Kafka
+    # Kafka — use partitions_for() which works once cluster metadata is populated
+    # (bootstrap_connected() returns False after the bootstrap node disconnects,
+    #  which is normal behavior once the producer has connected to the real brokers)
     try:
         producer = request.app.state.kafka_producer
-        connected = producer.bootstrap_connected()
-        components["kafka"] = "up" if connected else "down: not connected"
-        if not connected:
+        partitions = producer.partitions_for("logs.raw")
+        if partitions:
+            components["kafka"] = "up"
+        else:
+            components["kafka"] = "down: no partitions"
             overall = "degraded"
     except Exception as exc:
         components["kafka"] = f"down: {exc}"

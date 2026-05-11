@@ -272,3 +272,48 @@ async def run_detection_for_tenant_service(
         except Exception as e:
             logger.error(f"Failed to save/publish anomaly: {e}", exc_info=True)
             await db.rollback()
+
+
+async def detect_anomalies_for_all_tenants() -> None:
+    """Scan all tenant×service pairs in Redis and run statistical detection."""
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+
+    engine = create_async_engine(settings.DATABASE_URL, pool_size=5, max_overflow=10)
+    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    redis = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+
+    try:
+        all_keys = await redis.keys("tenant:*:services")
+        tenant_ids: set[str] = set()
+        for key in all_keys:
+            parts = key.split(":")
+            if len(parts) == 3 and parts[2] == "services":
+                tenant_ids.add(parts[1])
+
+        async with session_factory() as db:
+            for tenant_id in tenant_ids:
+                services_key = f"tenant:{tenant_id}:services"
+                services = await redis.smembers(services_key)
+                for service_name in services:
+                    try:
+                        await run_detection_for_tenant_service(tenant_id, service_name, redis, db)
+                    except Exception as e:
+                        logger.error(f"Detection failed for {tenant_id}/{service_name}: {e}")
+    finally:
+        await redis.aclose()
+        await engine.dispose()
+
+
+async def run_anomaly_detection_loop():
+    """Runs Stage 1 statistical detection every 30 seconds."""
+    logger.info("Anomaly detection loop starting")
+    while True:
+        try:
+            await detect_anomalies_for_all_tenants()
+            logger.info("Anomaly detection cycle complete")
+        except asyncio.CancelledError:
+            logger.info("Anomaly detection loop cancelled")
+            break
+        except Exception as e:
+            logger.error(f"Anomaly detection error (continuing): {e}")
+        await asyncio.sleep(30)

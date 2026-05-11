@@ -69,12 +69,7 @@ async def list_anomalies(
         .offset(offset)
     )
     anomalies = result.scalars().all()
-    return {
-        "data": [_anomaly_to_dict(a) for a in anomalies],
-        "total": total,
-        "limit": limit,
-        "offset": offset,
-    }
+    return [_anomaly_to_dict(a) for a in anomalies]
 
 
 @router.get("/anomalies/{anomaly_id}")
