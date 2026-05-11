@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -12,8 +13,14 @@ from app.core.config import settings
 from app.core.database import engine  # noqa: F401 — imported to satisfy lifespan reference
 from app.core.kafka_client import get_producer
 from app.core.redis_client import get_redis_pool
+import app.consumers.log_consumer as _log_consumer_module
+import app.consumers.anomaly_consumer as _anomaly_consumer_module
+from app.consumers.log_consumer import run_consumer
+from app.consumers.anomaly_consumer import run_anomaly_consumer
 from app.services.anomaly_detector import run_anomaly_detection_loop
 from app.services.baseline_calculator import run_baseline_calculator_loop
+
+_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="kafka-consumer")
 from app.api.v1 import (
     alerts,
     analysis,
@@ -49,13 +56,29 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         name="baseline-calculator"
     )
     logger.info("Background schedulers started")
+    loop = asyncio.get_running_loop()
+    log_consumer_future = loop.run_in_executor(_executor, run_consumer)
+    anomaly_consumer_task = asyncio.create_task(
+        run_anomaly_consumer(),
+        name="anomaly-consumer"
+    )
+    logger.info("Kafka consumers started")
     yield
     # ── Shutdown ─────────────────────────────────────────────────────────────
     logger.info("Shutting down…")
+    _log_consumer_module._shutdown = True
+    _anomaly_consumer_module._shutdown = True
     anomaly_task.cancel()
     baseline_task.cancel()
-    await asyncio.gather(anomaly_task, baseline_task, return_exceptions=True)
+    anomaly_consumer_task.cancel()
+    await asyncio.gather(anomaly_task, baseline_task, anomaly_consumer_task, return_exceptions=True)
     logger.info("Background schedulers stopped")
+    try:
+        await asyncio.wait_for(asyncio.wrap_future(log_consumer_future), timeout=10.0)
+    except (asyncio.TimeoutError, Exception):
+        pass
+    _executor.shutdown(wait=False)
+    logger.info("Kafka consumers stopped")
     await app.state.redis.aclose()
     app.state.kafka_producer.close()
     logger.info("Shutdown complete.")
