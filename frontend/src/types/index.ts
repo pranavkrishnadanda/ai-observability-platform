@@ -28,9 +28,9 @@ export interface Anomaly {
   detected_at: string
   window_start: string
   window_end: string
-  baseline_value: number
-  observed_value: number
-  deviation_pct: number
+  baseline_value: number | null
+  observed_value: number | null
+  deviation_pct: number | null
   claude_analysis: string | null
   status: 'active' | 'resolved' | 'acknowledged'
   resolved_at: string | null

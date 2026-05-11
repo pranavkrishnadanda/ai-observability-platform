@@ -41,7 +41,12 @@ export function AnomalyCard({ anomaly, onUpdate }: AnomalyCardProps) {
     }
   }
 
-  const analysis = anomaly.claude_analysis ?? ''
+  const analysisRaw = anomaly.claude_analysis ?? ''
+  let analysis = analysisRaw
+  try {
+    const parsed = JSON.parse(analysisRaw)
+    analysis = parsed?.root_cause ?? analysisRaw
+  } catch { /* not JSON, use as-is */ }
   const shortAnalysis = analysis.length > 180 ? analysis.slice(0, 180) + '…' : analysis
 
   return (
@@ -66,16 +71,20 @@ export function AnomalyCard({ anomaly, onUpdate }: AnomalyCardProps) {
       </div>
 
       <div className="flex items-center gap-4 mb-3 font-mono">
-        <span
-          className={`text-2xl font-bold ${
-            anomaly.deviation_pct >= 100 ? 'text-red-400' : 'text-orange-400'
-          }`}
-        >
-          +{anomaly.deviation_pct.toFixed(0)}%
-        </span>
+        {anomaly.deviation_pct != null ? (
+          <span
+            className={`text-2xl font-bold ${
+              anomaly.deviation_pct >= 100 ? 'text-red-400' : 'text-orange-400'
+            }`}
+          >
+            +{anomaly.deviation_pct.toFixed(0)}%
+          </span>
+        ) : (
+          <span className="text-2xl font-bold text-orange-400">new pattern</span>
+        )}
         <div className="text-xs text-slate-500">
-          <div>baseline {anomaly.baseline_value.toFixed(2)}</div>
-          <div>observed {anomaly.observed_value.toFixed(2)}</div>
+          {anomaly.baseline_value != null && <div>baseline {anomaly.baseline_value.toFixed(2)}</div>}
+          {anomaly.observed_value != null && <div>observed {anomaly.observed_value.toFixed(2)}</div>}
         </div>
         <div className="text-xs text-slate-500">
           score {anomaly.severity_score.toFixed(2)}
